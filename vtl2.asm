@@ -11,8 +11,38 @@
 ; R9 - Destination var
 
 include    bios.inc
-include    kernel.inc
 
+#ifdef MCHIP
+#define    CODE   07800h
+o_inmsg:   equ    f_inmsg
+o_input:   equ    f_input
+o_type:    equ    f_type
+o_readkey: equ    f_read
+xopenw:    equ    07006h
+xopenr:    equ    07009h
+xread:     equ    0700ch
+xwrite:    equ    0700fh
+xclosew:   equ    07012h
+xcloser:   equ    07015h
+#endif
+
+#ifdef DLOAD
+#define    CODE   02000h
+o_inmsg:   equ    f_inmsg
+o_input:   equ    f_input
+o_type:    equ    f_type
+o_readkey: equ    f_read
+xopenw:    equ    08006h
+xopenr:    equ    08009h
+xread:     equ    0800ch
+xwrite:    equ    0800fh
+xclosew:   equ    08012h
+xcloser:   equ    08015h
+#endif
+
+#ifdef ELFOS
+#define    CODE   02000h
+include    kernel.inc
            org     8000h
            lbr     0ff00h
            db      'vtl2',0
@@ -22,14 +52,31 @@ include    kernel.inc
            dw      endrom-2000h
            dw      2000h
            db      0
+#endif
  
-           org     2000h
+#ifdef ELFOS
+           org     CODE
            br      start
-
 include    date.inc
 include    build.inc
            db      'Written by Michael H. Riley',0
+#endif
 
+#ifdef DLOAD
+           org     CODE-4
+           dw      CODE
+           dw      endrom-CODE
+           mov     r2,stack
+           mov     r6,start
+           lbr     f_initcall
+#endif
+
+#ifdef MCHIP
+           org     CODE
+           mov     r2,stack
+           mov     r6,start
+           lbr     f_initcall
+#endif
 
 trim:      lda     r8                  ; get next byte
            smi     ' '                 ; check for spaces
@@ -105,14 +152,28 @@ lenlp:     inc     rc           ; increment count
            bnz     lenlp        ; Loop until end found
            ret                  ; then return to caller
 
-start:     call    o_inmsg             ; display header
-           db      'Rc/VTL2 V0.1.0',10,13,0
+start:
+#ifdef MCHIP
+           ldi     0ch               ; form feed
+           sep     scall             ; clear the screen
+           dw      f_type
+#endif
+           call    o_inmsg             ; display header
+           db      'Rc/VTL2 V1.0.1',10,13,0
 
+#ifdef ELFOS
 new:       mov     rc,HIMEM            ; set end of memory pointer
            lda     rc
            phi     rf
            lda     rc
            plo     rf
+#endif
+#ifdef DLOAD
+new:       mov     rf,07dffh           ; set end of memory pointer
+#endif
+#ifdef MCHIP
+new:       mov     rf,0fdffh           ; set end of memory pointer
+#endif
            ldi     '*'                 ; need * variable
            call    store
 
@@ -137,8 +198,7 @@ main:      mov     r2,stack            ; reset stack pointer
            db      '>',0
            mov     rf,buffer
            call    o_input             ; get input from user
-           call    o_inmsg             ; display cr/lf
-           db      10,13,0
+           call    crlf                ; display cr/lf
            mov     r8,buffer
            ldn     r8
            smi     '<'                 ; check for load <
@@ -161,9 +221,12 @@ main:      mov     r2,stack            ; reset stack pointer
            lbnz    insline             ; insert line if not terminator
            call    delline             ; otherwise delete line
            lbr     main                ; and back to main loop
-doexec:    call    exec                ; execute line
-           call    o_inmsg             ; display cr/lf
-           db      10,13,0
+doexec:    mov     r7,r8
+           dec     r7
+           dec     r7
+           dec     r7
+           call    exec                ; execute line
+           call    crlf                ; display cr/lf
            lbr     main                ; and back to main loop
 
 run:       call    findline            ; find next line to execute
@@ -224,8 +287,7 @@ print:     lda     r8                  ; get next byte
            lda     r8                  ; get final byte
            smi     ';'                 ; check for semicolon
            lbz     return              ; jump if so
-           call    o_inmsg             ; otherwise output cr/lf
-           db      10,13,0
+           call    crlf                ; otherwise output cr/lf
            ret                         ; and return
 print1:    glo     re                  ; recover character
            call    o_type              ; display it
@@ -278,6 +340,9 @@ eval_o:    lda     r8                  ; get operation
            smi     ')'                 ; check for close parens
            lbz     eval_cp
            adi     ')'                 ; recover character
+           smi     125                 ; check for close brace
+           lbz     eval_cp
+           adi     125
            stxd                        ; otherwise push operation on stack
            lbr     eval_n              ; and then get next number
 eval_cp:   irx                         ; recover number from stack
@@ -291,7 +356,9 @@ eval_cp:   irx                         ; recover number from stack
            smi     '('                 ; must be open parens
            lbnz    eval_z              ; jump if not
            lbr     eval_n1             ; now process as normal number
-eval_2:    smi     '*'                 ; check for *
+eval_2:    smi     '&'                 ; check for &
+           lbz     and
+           smi     4                   ; check for *
            lbz     mul
            smi     1                   ; check for +
            lbz     add
@@ -305,6 +372,10 @@ eval_2:    smi     '*'                 ; check for *
            lbz     eq
            smi     1                   ; check for >
            lbz     gt
+           smi     32                  ; check for ^
+           lbz     xor
+           smi     30                  ; check for |
+           lbz     or
 
 eval_z:    irx                         ; recover final result
            ldxa
@@ -315,28 +386,54 @@ eval_z:    irx                         ; recover final result
 eval_z2:   mov     rf,rd               ; move number to rf
            ret                         ; and return
 
-add:       irx                         ; recover first argument
+and:       mov     ra,doand            ; AND
+           lbr     doop
+or:        mov     ra,door             ; OR
+           lbr     doop
+xor:       mov     ra,doxor            ; XOR
+           lbr     doop
+add:       mov     ra,doadd            ; ADC
+doop:      adi     0                   ; clear carry flag
+           irx                         ; recover first argument
            ldxa
            phi     rc
            ldx
-           str     r2                  ; add rd to it
-           glo     rd
-           add
+           str     r2                  ; prepare for op
+           glo     rd                  ; against rd
+           sep     ra
            plo     rc
            ghi     rc
            str     r2
            ghi     rd
-           adc
+           sep     ra
            phi     rc
-eval_pc:   glo     rc                  ; put result on stack
+eval_pc:   glo     rc
            stxd
            ghi     rc
            stxd
-           lbr     eval_o              ; next get operation
+           lbr     eval_o
+      
+doand:     and
+           sep     r3
+           and
+           sep     r3
+door:      or
+           sep     r3
+           or
+           sep     r3
+doxor:     xor
+           sep     r3
+           xor
+           sep     r3
+doadd:     adc
+           sep     r3
+           adc
+           sep     r3
 
 sub:       mov     rf,subr             ; perform subtraction
            sep     rf
            lbr     eval_pc             ; save result
+
 
 mul:       irx                         ; recover first arg
            ldxa 
@@ -375,11 +472,9 @@ gt:        mov     rf,subr             ; perform subtraction
            str     r2
            ghi     rc
            or
-           lbz     logic_0             ; jump if unequal
-           ghi     rc                  ; check sign
-           shl
-           lbdf    logic_0             ; fail if negative
-           lbr     logic_1             ; otheriwse succeed
+           lbz     logic_0             ; jump if equal
+           lbnf  logic_0
+           lbr   logic_1
 
 lt:        mov     rf,subr             ; perform subtraction
            sep     rf
@@ -388,10 +483,8 @@ lt:        mov     rf,subr             ; perform subtraction
            ghi     rc
            or
            lbz     logic_0             ; jump if unequal
-           ghi     rc                  ; check sign
-           shl
-           lbdf    logic_1             ; success if negative
-           lbr     logic_0             ; otheriwse fail
+           lbdf  logic_0
+           lbr   logic_1
 
 subr:      irx                         ; recover first argument
            ldxa
@@ -560,58 +653,6 @@ atoi_0_1:  ldn     r8                  ; get next character
 atoi_0_2:  mov     rd,rc
            ret                         ; and return to caller
 
-
-;atoi:      ldi     0                   ; clear total
-;           plo     rd
-;           phi     rd
-;atoi_0_1:  lda     r8                  ; get next character
-;           smi     '0'                 ; convert to binary
-;           lbnf    atoi_0_2            ; jump if below numbers
-;           plo     re                  ; and set it aside for now
-;           smi     10                  ; check for above numbers
-;           lbdf    atoi_0_2            ; jump if above numbers
-;           glo     rd                  ; multiply total by 2
-;           shl
-;           plo     rd
-;           plo     rc                  ; keep a copy here too
-;           ghi     rd
-;           shlc
-;           phi     rd
-;           phi     rc
-;           glo     rc                  ; multiply rc by 2
-;           shl
-;           plo     rc
-;           ghi     rc
-;           shlc
-;           phi     rc
-;           glo     rc                  ; multiply rc by 4
-;           shl
-;           plo     rc
-;           ghi     rc
-;           shlc
-;           phi     rc
-;           glo     rc                  ; rf += rc
-;           str     r2
-;           glo     rd
-;           add
-;           plo     rd
-;           ghi     rc
-;           str     r2
-;           ghi     rd
-;           adc
-;           phi     rd
-;           glo     re                  ; rd += new number
-;           str     r2
-;           glo     rd
-;           add
-;           plo     rd
-;           ghi     rd
-;           adci    0
-;           phi     rd
-;           lbr     atoi_0_1            ; loop back for more numerals
-;atoi_0_2:  dec     r8                  ; move back to non-numeral character
-;           ret                         ; and return to caller
-
 ; **************************************
 ; ***** Convert RF to bcd in M[RD] *****
 ; **************************************
@@ -733,10 +774,18 @@ itoaz:     ghi     r8           ; see if leading have been used up
 save:      inc     r8           ; move past symbol
            call    trim         ; then past any spaces
            mov     rf,r8        ; prepare for open
+#ifdef ELFOS
            mov     rd,fildes
            mov     r7,3         ; create/truncate
            call    o_open       ; open the file
            lbdf    dskerr
+#endif
+#ifdef DLOAD
+           call    xopenw
+#endif
+#ifdef MCHIP
+           call    xopenw
+#endif
            ldi     '&'          ; need last program address
            call    fetch
            glo     rf           ; subtract program start
@@ -747,23 +796,51 @@ save:      inc     r8           ; move past symbol
            phi     rc
            inc     rc
            mov     rf,program   ; point to program space
+#ifdef ELFOS
            mov     rd,fildes
            call    o_write      ; write to disk
            call    o_close      ; close file
+#endif
+#ifdef DLOAD
+           call    xwrite
+           call    xclosew
+#endif
+#ifdef MCHIP
+           call    xwrite
+           call    xclosew
+#endif
            lbr     main         ; and back to main
 
 load:      inc     r8           ; move past symbol
            call    trim         ; then past any spaces
            mov     rf,r8        ; prepare for open
+#ifdef ELFOS
            mov     rd,fildes
            mov     r7,0         ; create/truncate
            call    o_open       ; open the file
            lbdf    dskerr
+#endif
+#ifdef DLOAD
+           call    xopenr
+#endif
+#ifdef MCHIP
+           call    xopenr
+#endif
            mov     rc,32767     ; read as many bytes as possible
            mov     rf,program   ; point to program space
+#ifdef ELFOS
            mov     rd,fildes
            call    o_read       ; read from disk
            call    o_close      ; close file
+#endif
+#ifdef DLOAD
+           call    xread
+           call    xcloser
+#endif
+#ifdef MCHIP
+           call    xread
+           call    xcloser
+#endif
            mov     rf,program   ; need to find end of program
 loadlp:    ldn     rf           ; get next byte
            lbz     loaddn       ; jump if end found
@@ -992,8 +1069,7 @@ listlp1:   lda     r7           ; get next byte from program
            lbz     list_1       ; jump if end of line
            call    o_type       ; otherwise display it
            lbr     listlp1      ; keep displaying line
-list_1:    call    o_inmsg      ; display cr/lf
-           db      10,13,0
+list_1:    call    crlf         ; display cr/lf
            lbr     listlp       ; and keep listing program until done
 
 ; *********************************************
@@ -1090,12 +1166,16 @@ store:     plo     re                  ; save variable
            lbz     store_d             ; jump if so
            smi     2                   ; check for &
            lbz     store_a             ; jump if so
-           smi     4                   ; check for *
+           smi     1                   ; check for '
+           lbz     store_r             ; jump if so
+           smi     3                   ; check for *
            lbz     store_s             ; jump if so
            smi     16                  ; check for :
            lbz     store_y             ; jump if so
            smi     5                   ; check for ?
            lbz     store_q             ; jump if so
+           smi     60                  ; check for open brace
+           lbz     store_y2
 store2:    glo     re
            smi     '!'
            shl                         ; variables are two bytes
@@ -1124,7 +1204,15 @@ store_s:   glo     rf                  ; check for zero
            lbnz    store2              ; jump if not
            ghi     rf
            lbnz    store2
+#ifdef ELFOS
            lbr     o_wrmboot           ; otherwise return to the OS
+#endif
+#ifdef DLOAD
+           lbr     08003h
+#endif
+#ifdef MCHIP
+           lbr     07003h
+#endif
 store_n:   glo     rf                  ; check for zero
            lbnz    store_n1            ; jump if not
            ghi     rf
@@ -1142,6 +1230,13 @@ store_y:   glo     rf                  ; save value
            ldx
            str     rf
            ret                         ; and return to caller
+store_y2:  glo     rf                  ; save value
+           stxd
+           call    eval                ; get address
+           irx                         ; recover value
+           ldx
+           str     rf                  ; and store it
+           ret
 store_n1:  mov     rd,variables+4      ; need to retrieve current line pointer
            lda     rd
            phi     rc
@@ -1160,6 +1255,21 @@ store_n1:  mov     rd,variables+4      ; need to retrieve current line pointer
            ghi     rf
            str     rd
            lbr     run                 ; run from specified line
+store_r:   mov     rd,lfsr             ; point to lfsr
+           ghi     rf                  ; write to register
+           str     rd
+           inc     rd
+           glo     rf
+           str     rd
+           inc     rd
+           ghi     rf
+           xri     0ffh
+           str     rd
+           inc     rd
+           glo     rf
+           xri     0ffh
+           str     rd
+           ret
 
 ; ***********************************
 ; ***** Store value to variable *****
@@ -1170,6 +1280,9 @@ store_n1:  mov     rd,variables+4      ; need to retrieve current line pointer
 fetch:     plo     re
            smi     ':'                 ; check for array reference
            lbz     fetch_a             ; jump if so
+           glo     re
+           smi     123                 ; check for open brace
+           lbz     fetch_b
            glo     re
            smi     '$'                 ; check for single char input
            lbz     fetch_d
@@ -1197,6 +1310,12 @@ fetch_a:   call    arrayadr            ; get address of array element
            glo     re
            phi     rf
            ret                         ; and return
+fetch_b:   call    eval                ; evaluate expression to get address
+           lda     rf                  ; retrieve value
+           plo     rf
+           ldi     0
+           phi     rf
+           ret
 fetch_d:   call    o_readkey           ; read character
            plo     rf                  ; place into rd
            ldi     0
@@ -1241,6 +1360,7 @@ crlf:      call    o_inmsg
            db      10,13,0
            ret
 
+#ifdef ELFOS
 fildes:    db      0,0,0,0
            dw      dta
            db      0,0
@@ -1248,15 +1368,20 @@ fildes:    db      0,0,0,0
            db      0,0,0,0
            dw      0,0
            db      0,0,0,0
+#endif
 
 endrom:    equ     $
 
+#ifdef MCHIP
+           org     08100h
+#endif
+
 buffer:    ds      130
 buffer2:   ds      130
-dta:       dw      512
-lfsr:      dw      4
+dta:       ds      512
+lfsr:      ds      4
            ds      1024
 stack:     ds      1
 variables: ds      192
-program:   dw      1
+program:   ds      1
 

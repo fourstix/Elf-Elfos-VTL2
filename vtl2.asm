@@ -10,7 +10,8 @@
 ; R8 - Executing line
 ; R9 - Destination var
 
-include    bios.inc
+#include    ../include/ops.inc
+#include    ../include/bios.inc
 
 #ifdef MCHIP
 #define    CODE   07800h
@@ -42,7 +43,7 @@ xcloser:   equ    08015h
 
 #ifdef ELFOS
 #define    CODE   02000h
-include    kernel.inc
+#include   kernel.inc
            org     8000h
            lbr     0ff00h
            db      'vtl2',0
@@ -57,8 +58,8 @@ include    kernel.inc
 #ifdef ELFOS
            org     CODE
            br      start
-include    date.inc
-include    build.inc
+#include   date.inc
+#include   build.inc
            db      'Written by Michael H. Riley',0
 #endif
 
@@ -82,7 +83,7 @@ trim:      lda     r8                  ; get next byte
            smi     ' '                 ; check for spaces
            bz      trim                ; skip past any spaces
            dec     r8                  ; move back to non-space
-return:    ret                         ; and return
+return:    rtn                         ; and return
 
 ; ****************************
 ; ***** Copy memory      *****
@@ -94,7 +95,7 @@ copy:      glo     rc           ; see if done
            bnz     copy1        ; jump if not
            ghi     rc
            bnz     copy1
-           ret                  ; return to caller
+           rtn                  ; return to caller
 copy1:     lda     rf           ; get byte from source
            str     rd           ; store into destination
            inc     rd
@@ -133,7 +134,7 @@ copydnl:   glo     rc           ; see if done
            bnz     copydn1      ; jump if not
            ghi     rc
            bnz     copydn1
-           ret                  ; otherwise return
+           rtn                  ; otherwise return
 copydn1:   ldn     rf           ; get byte from source
            str     rd           ; store into destination
            dec     rf           ; update pointers
@@ -150,16 +151,16 @@ len:       mov     rc,0         ; set initial count
 lenlp:     inc     rc           ; increment count
            lda     rf           ; get byte from string
            bnz     lenlp        ; Loop until end found
-           ret                  ; then return to caller
+           rtn                  ; then return to caller
 
 start:
 #ifdef MCHIP
-           ldi     0ch               ; form feed
            sep     scall             ; clear the screen
-           dw      f_type
+           dw      f_inmsg
+           db      01bh,'[2J',0      ; ANSI erase display
 #endif
            call    o_inmsg             ; display header
-           db      'Rc/VTL2 V1.0.1',10,13,0
+           db      'Rc/VTL2 V1.0.2',10,13,0
 
 #ifdef ELFOS
 new:       mov     rc,HIMEM            ; set end of memory pointer
@@ -288,7 +289,7 @@ print:     lda     r8                  ; get next byte
            smi     ';'                 ; check for semicolon
            lbz     return              ; jump if so
            call    crlf                ; otherwise output cr/lf
-           ret                         ; and return
+           rtn                         ; and return
 print1:    glo     re                  ; recover character
            call    o_type              ; display it
            lbr     print               ; back to print loop
@@ -382,9 +383,9 @@ eval_z:    irx                         ; recover final result
            phi     rf
            ldxa
            plo     rf
-           ret                         ; and return to caller
+           rtn                         ; and return to caller
 eval_z2:   mov     rf,rd               ; move number to rf
-           ret                         ; and return
+           rtn                         ; and return
 
 and:       mov     ra,doand            ; AND
            lbr     doop
@@ -516,7 +517,7 @@ mulloop:   glo     rd                  ; get low of multiplier
            ghi     rd                  ; check hi byte as well
            lbnz    mulcont
            mov     rc,rf               ; transfer answer
-           ret                         ; return to caller
+           rtn                         ; return to caller
 mulcont:   ghi     rd                  ; shift multiplier
            shr
            phi     rd
@@ -552,7 +553,7 @@ div16:     glo     rd                  ; check for divide by zero
            ghi     rd
            lbnz    div16_1
            mov     rc,0                ; return 0 as div/0
-           ret                         ; and return to caller
+           rtn                         ; and return to caller
 div16_1:   push    r9                  ; save consumed registers
            push    r8
            ldi     0                   ; clear answer
@@ -585,7 +586,7 @@ divret:    mov     rd,rc               ; move remainder to rd
            mov     rc,rf               ; move answer to rc
            pop     r8                  ; recover consumed registers
            pop     r9
-           ret                         ; jump if done
+           rtn                         ; jump if done
 divgo:     mov     r9,rc               ; copy dividend
            glo     rd                  ; get lo of divisor
            str     r2                  ; store for subtract
@@ -651,7 +652,7 @@ atoi_0_1:  ldn     r8                  ; get next character
            phi     rc
            lbr     atoi_0_1
 atoi_0_2:  mov     rd,rc
-           ret                         ; and return to caller
+           rtn                         ; and return to caller
 
 ; **************************************
 ; ***** Convert RF to bcd in M[RD] *****
@@ -715,7 +716,7 @@ tobcdlp4:  lda     rd           ; get current cell
            dec     r9           ; decrement bit count
            glo     r9           ; see if done
            lbnz    tobcdlp2     ; loop until done
-           ret                  ; return to caller
+           rtn                  ; return to caller
 ; ***************************************************
 ; ***** Output 16-bit integer                   *****
 ; ***** RF - 16-bit integer                     *****
@@ -760,7 +761,7 @@ itoa3:     dec     r8
            pop     r9
            ldi     0            ; terminate string
            str     rb
-           ret                  ; return to caller
+           rtn                  ; return to caller
 itoaz:     ghi     r8           ; see if leading have been used up
            lbz     itoa2        ; jump if so
            smi     1            ; decrement count
@@ -952,7 +953,7 @@ delline:   call    findline     ; find the line
            dec     rf           ; -1
            ldi     '&'
            call    store
-           ret                  ; return to caller
+           rtn                  ; return to caller
 
 ; *************************************
 ; ***** Insert line               *****
@@ -1151,7 +1152,7 @@ lfsr_lp:   ldi     high lfsr           ; point to lfsr
            ldn     r7
            phi     rf
            pop     r7                  ; recover r7
-           ret                         ; and return
+           rtn                         ; and return
 
 
 ; ***********************************
@@ -1189,7 +1190,7 @@ store2:    glo     re
            inc     rd
            glo     rf
            str     rd
-           ret                         ; return to caller
+           rtn                         ; return to caller
 store_a:   glo     rf                  ; check for zero
            lbnz    store2              ; jump if not
            ghi     rf
@@ -1217,7 +1218,7 @@ store_n:   glo     rf                  ; check for zero
            lbnz    store_n1            ; jump if not
            ghi     rf
            lbnz    store_n1
-           ret                         ; otherwise do nothing
+           rtn                         ; otherwise do nothing
 store_y:   glo     rf                  ; save value
            stxd
            ghi     rf
@@ -1229,14 +1230,14 @@ store_y:   glo     rf                  ; save value
            inc     rf
            ldx
            str     rf
-           ret                         ; and return to caller
+           rtn                         ; and return to caller
 store_y2:  glo     rf                  ; save value
            stxd
            call    eval                ; get address
            irx                         ; recover value
            ldx
            str     rf                  ; and store it
-           ret
+           rtn
 store_n1:  mov     rd,variables+4      ; need to retrieve current line pointer
            lda     rd
            phi     rc
@@ -1269,7 +1270,7 @@ store_r:   mov     rd,lfsr             ; point to lfsr
            glo     rf
            xri     0ffh
            str     rd
-           ret
+           rtn
 
 ; ***********************************
 ; ***** Store value to variable *****
@@ -1301,7 +1302,7 @@ fetch:     plo     re
            phi     rf
            lda     rd
            plo     rf
-           ret                         ; return to caller
+           rtn                         ; return to caller
 fetch_a:   call    arrayadr            ; get address of array element
            lda     rf                  ; retrieve value from array
            plo     re
@@ -1309,18 +1310,18 @@ fetch_a:   call    arrayadr            ; get address of array element
            plo     rf
            glo     re
            phi     rf
-           ret                         ; and return
+           rtn                         ; and return
 fetch_b:   call    eval                ; evaluate expression to get address
            lda     rf                  ; retrieve value
            plo     rf
            ldi     0
            phi     rf
-           ret
+           rtn
 fetch_d:   call    o_readkey           ; read character
            plo     rf                  ; place into rd
            ldi     0
            phi     rf
-           ret                         ; and return
+           rtn                         ; and return
 fetch_q:   mov     rf,buffer2          ; point to buffer
            call    o_input             ; get input
            call    crlf
@@ -1328,7 +1329,7 @@ fetch_q:   mov     rf,buffer2          ; point to buffer
            mov     r8,buffer2          ; point to buffer
            call    eval                ; and evaluate it
            pop     r8                  ; recover pointer
-           ret                         ; return to caller
+           rtn                         ; return to caller
 
 ; *****************************************
 ; ***** Get address of array element  *****
@@ -1354,11 +1355,11 @@ arrayadr:  call    eval                ; evaluate array expression
            ghi     rf
            adc
            phi     rf
-           ret                         ; return to caller
+           rtn                         ; return to caller
 
 crlf:      call    o_inmsg
            db      10,13,0
-           ret
+           rtn
 
 #ifdef ELFOS
 fildes:    db      0,0,0,0
@@ -1384,4 +1385,3 @@ lfsr:      ds      4
 stack:     ds      1
 variables: ds      192
 program:   ds      1
-
